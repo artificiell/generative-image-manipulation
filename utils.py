@@ -16,13 +16,13 @@ class SaveBestModel:
         if current_valid_loss < self.best_valid_loss:
             self.best_valid_loss = current_valid_loss
             print(f"\nBest validation loss: {self.best_valid_loss}")
-            print(f"\nSaving best model for epoch: {epoch+1}\n")
+            print(f"\nSaving best model for epoch: {epoch}\n")
             torch.save({
-                'epoch': epoch+1,
+                'epoch': epoch,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'loss': criterion,
-                }, '/{}_best_model.pth'.format(model_name))
+                }, 'outputs/{}_best_model.pth'.format(model_name))
             
 
 def save_model(epochs, model, optimizer, criterion):
@@ -38,9 +38,9 @@ def save_model(epochs, model, optimizer, criterion):
                 }, 'outputs/final_model.pth')
 
 
-def save_plots(train_acc, valid_acc, train_loss, valid_loss):
+def save_accuracy_plot(train_acc, valid_acc):
     """
-    Function to save the loss and accuracy plots to disk.
+    Function to save the accuracy plots to disk.
     """
     # accuracy plots
     plt.figure(figsize=(10, 7))
@@ -56,16 +56,24 @@ def save_plots(train_acc, valid_acc, train_loss, valid_loss):
     plt.ylabel('Accuracy')
     plt.legend()
     plt.savefig('outputs/accuracy.png')
-    
+
+def save_loss_plot(train_loss, valid_loss, test_loss):
+    """
+    Function to save the loss plots to disk.
+    """    
     # loss plots
     plt.figure(figsize=(10, 7))
     plt.plot(
-        train_loss, color='orange', linestyle='-', 
-        label='train loss'
+        train_loss.keys(), train_loss.values(),
+        color='blue', linestyle='-', label='Train loss'
     )
     plt.plot(
-        valid_loss, color='red', linestyle='-', 
-        label='validataion loss'
+        valid_loss.keys(), valid_loss.values(),
+        color='red', linestyle='-', label='Validataion loss'
+    )
+    plt.plot(
+        test_loss.keys(), test_loss.values(),
+        color='orange', linestyle='-', label='Test loss'
     )
     plt.xlabel('Epochs')
     plt.ylabel('Loss')

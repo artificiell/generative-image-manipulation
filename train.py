@@ -38,7 +38,7 @@ import gimli
 import gimli_v2
 import gimli_with_attention
 from pickle import dump
-from utils import SaveBestModel, save_model, save_plots
+from utils import SaveBestModel, save_model, save_loss_plot
 
 writer = SummaryWriter()
 
@@ -69,6 +69,40 @@ def load_dataset(dir_path):
     print('\ttestset size:', len(testset))
     
     return trainset, testset
+
+def split_dataset(args):
+    trainset, testset = load_dataset(args.data_dir)
+    train_test = torch.utils.data.ConcatDataset([trainset, testset])
+    train_size = int(0.8 * len(train_test))
+    test_val_size = int(0.1 * len(train_test)) + 1
+    print('Size of')
+    print('\tconcatenated dataset: ', len(train_test))
+    print('\ttrain set: ', train_size)
+    print('\ttest set: ', test_val_size)
+    print('\tval set: ', test_val_size)
+    train_dataset, test_dataset, val_dataset = torch.utils.data.random_split(train_test, [train_size, test_val_size, test_val_size])
+    train_dataloader = torch.utils.data.DataLoader(train_dataset, 
+                                                   batch_size=args.batch_size,
+                                                   shuffle=True,
+                                                   num_workers=args.num_workers,
+                                                   drop_last=True,
+                                                   collate_fn=lambda i: i,
+						   pin_memory=True)
+    test_dataloader = torch.utils.data.DataLoader(test_dataset, 
+                                                  batch_size=args.batch_size,
+                                                  shuffle=True,
+                                                  num_workers=args.num_workers,
+                                                  drop_last=True,
+                                                  collate_fn=lambda i: i,
+                                                  pin_memory=True)
+    val_dataloader = torch.utils.data.DataLoader(val_dataset, 
+                                                 batch_size=args.batch_size,
+                                                 shuffle=True,
+                                                 num_workers=args.num_workers,
+                                                 drop_last=True,
+                                                 collate_fn=lambda i: i,
+                                                 pin_memory=True)
+    return train_dataloader, test_dataloader, val_dataloader 
 
 def train(data, model, lang_model, optimizer, epoch, args, loss_dict):
     model.train()
@@ -102,9 +136,10 @@ def train(data, model, lang_model, optimizer, epoch, args, loss_dict):
         output, _, _ ,_ = model(src_img, embedding_tensor)
         
         loss = criterion(output, target_img)
+
+        '''
         # Store loss for tracking
         epoch_loss.append(loss.item())
-        
         # Higher weights on pixels that change more
         # Weight decay depending on number of epochs
         weight_value = 0       
@@ -122,6 +157,7 @@ def train(data, model, lang_model, optimizer, epoch, args, loss_dict):
             
         loss = loss*weight
         loss = loss.mean()
+        '''
         
         # Bacward pass
         loss.backward()
@@ -154,7 +190,7 @@ def train(data, model, lang_model, optimizer, epoch, args, loss_dict):
         
     if epoch % 50 == 0:
             tensor = torch.cat((src_img.cpu().data, target_img.cpu().data, output.cpu().data), 0)
-            save_image(tensor, './dc_img/modelG_{}_{}.png'.format(args.model, epoch), nrow=args.batch_size, normalize=True, range=(-1, 1))
+            save_image(tensor, './outputs/modelG_{}_{}.png'.format(args.model, epoch), nrow=args.batch_size, normalize=True, range=(-1, 1))
             with open('actions_{}_{}.pkl'.format(args.model, epoch), 'wb') as file:
                 dump(action_list, file)
     
@@ -305,35 +341,9 @@ def main(args):
     batch_shuffle = True
     args.cuda = not args.no_cuda and torch.cuda.is_available()
 
+    # Load and split dataset
+    train_dataloader, test_dataloader, val_dataloader = split_dataset(args)
 
-    trainset, testset = load_dataset(args.data_dir)
-    train_test = torch.utils.data.ConcatDataset([trainset, testset])
-    train_size = int(0.8 * len(train_test))
-    test_val_size = int(0.1 * len(train_test)) + 1
-    print('Size of')
-    print('\tconcatenated dataset: ', len(train_test))
-    print('\ttrain set: ', train_size)
-    print('\ttest set: ', test_val_size)
-    print('\tval set: ', test_val_size)
-    train_dataset, test_dataset, val_dataset = torch.utils.data.random_split(train_test, [train_size, test_val_size, test_val_size])
-    train_dataloader = torch.utils.data.DataLoader(train_dataset, 
-                                                   batch_size=args.batch_size,
-                                                   shuffle=True,
-                                                   num_workers=args.num_workers,
-                                                   drop_last=True,
-                                                   collate_fn=lambda i: i)
-    test_dataloader = torch.utils.data.DataLoader(test_dataset, 
-                                                   batch_size=args.batch_size,
-                                                   shuffle=True,
-                                                   num_workers=args.num_workers,
-                                                   drop_last=True,
-                                                   collate_fn=lambda i: i)
-    val_dataloader = torch.utils.data.DataLoader(val_dataset, 
-                                                   batch_size=args.batch_size,
-                                                   shuffle=True,
-                                                   num_workers=args.num_workers,
-                                                   drop_last=True,
-                                                   collate_fn=lambda i: i)
     model_name = ''
     start_epoch = 1
     if args.resume:
@@ -407,7 +417,7 @@ def main(args):
         t_progress_bar.set_description('TEST')
         test(test_dataloader, model, language_model, epoch, args, test_loss)
 
-
+        save_loss_plot(train_loss, val_loss, test_loss)        
         if epoch % 50 == 0:
             torch.save(model.state_dict(), './{}_epoch_{}.pth'.format(model_name, epoch))
     
