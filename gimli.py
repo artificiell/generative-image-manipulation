@@ -78,6 +78,7 @@ class generator(nn.Module):
         # Image encoder
         phi_im = self.imencoder(x1)
         batch_size, n_channel, conv_h, conv_w = phi_im.size()
+
         n_pair = conv_h * conv_w
         # Cast all pairs against each other
         x_grid = self.x_grid.reshape(1, 1, conv_h, conv_w).repeat(batch_size, 1, 1, 1)
@@ -113,6 +114,10 @@ class generator(nn.Module):
         
         # Decoder
         x = self.decoder(phi)
+        print("phi: ", x.size())
+        print("phi_im: ", x.size())
+        print("ph_s: ", x.size())
+        print("x: ", x.size())
         
         return x, phi, phi_im, phi_s
     

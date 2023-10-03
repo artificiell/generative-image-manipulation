@@ -4,44 +4,30 @@ import torch.nn as nn
 from torch.nn import init
 from torch.autograd import Variable
 
-from block import SingleConvBlock, DoubleConvBlock, UpSingleConvBlock, UpDoubleConvBlock
+from block import DoubleConvBlock, ResidualConvBlock, ResidualInputBlock, UpResidualConvBlock
 
 # Generator model
 class generator(nn.Module):
-    def __init__(self, num_channels = 3, mlp_nfilters = 32, mlp_hidden = 256, height_hidden = 7, width_hidden = 11):
+    def __init__(self, num_channels = 3, mlp_nfilters = 32, mlp_hidden = 256, height_hidden = 14, width_hidden = 22):
         super(generator, self).__init__()        
         self.mlp_nfilters = mlp_nfilters
 
-        # Joint pool layer
-        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+
+        # Image encoder pathway
+        self.encoder1 = ResidualInputBlock(num_channels, 64)
+        self.encoder2 = ResidualConvBlock(64, 128)
+        self.encoder3 = ResidualConvBlock(128, 256)
+
+        self.bottleneck = DoubleConvBlock(256, 512)
+        self.preconv = DoubleConvBlock(1026, 512)
         
-        # Image encoder pathway
-        self.encoder1 = SingleConvBlock(num_channels, 64)
-        self.encoder2 = SingleConvBlock(64, 128)
-        self.encoder3 = SingleConvBlock(128, 256)
-        self.encoder4 = SingleConvBlock(256, 512)
-
-        self.bottleneck = SingleConvBlock(512, 1024)
-        self.preconv = SingleConvBlock(2050, 1024)
-        '''
-
-        # Image encoder pathway
-        self.encoder1 = DoubleConvBlock(num_channels, 64)
-        self.encoder2 = DoubleConvBlock(64, 128)
-        self.encoder3 = DoubleConvBlock(128, 256)
-        self.encoder4 = DoubleConvBlock(256, 512)
-
-        self.bottleneck = DoubleConvBlock(512, 1024)
-        self.preconv = DoubleConvBlock(2050, 1024) 
-        '''
-       
         # Linear projection
         self.projection = nn.Sequential(
             nn.Linear(384, mlp_hidden),
             nn.ReLU(True),
             nn.Linear(mlp_hidden, mlp_hidden),
             nn.ReLU(True),
-            nn.Linear(mlp_hidden, 1024),
+            nn.Linear(mlp_hidden, 512),
             nn.ReLU(True)
         )
         self.x_grid, self.y_grid = torch.meshgrid(
@@ -50,17 +36,9 @@ class generator(nn.Module):
         )
 
         # Image decoder pathway
-        self.decoder1 = UpSingleConvBlock(1024, 512)
-        self.decoder2 = UpSingleConvBlock(512, 256)
-        self.decoder3 = UpSingleConvBlock(256, 128)
-        self.decoder4 = UpSingleConvBlock(128, 64)
-        '''
-        # Image decoder pathway
-        self.decoder1 = UpDoubleConvBlock(1024, 512)
-        self.decoder2 = UpDoubleConvBlock(512, 256)
-        self.decoder3 = UpDoubleConvBlock(256, 128)
-        self.decoder4 = UpDoubleConvBlock(128, 64)
-        '''
+        self.decoder1 = UpResidualConvBlock(512, 256)
+        self.decoder2 = UpResidualConvBlock(256, 128)
+        self.decoder3 = UpResidualConvBlock(128, 64)
         
         # Output layer
         self.outconv = nn.Conv2d(64, num_channels, kernel_size=1)
@@ -77,11 +55,10 @@ class generator(nn.Module):
 
         # Image encoder
         phi_im_enc1 = self.encoder1(x)
-        phi_im_enc2 = self.encoder2(self.pool(phi_im_enc1))
-        phi_im_enc3 = self.encoder3(self.pool(phi_im_enc2))
-        phi_im_enc4 = self.encoder4(self.pool(phi_im_enc3))
-        phi_im = self.bottleneck(self.pool(phi_im_enc4))
-        '''
+        phi_im_enc2 = self.encoder2(phi_im_enc1)
+        phi_im_enc3 = self.encoder3(phi_im_enc2)
+        phi_im = self.bottleneck(phi_im_enc3)
+
         # Cast all pairs against each other
         batch_size, n_channel, conv_h, conv_w = phi_im.size()
         x_grid = self.x_grid.reshape(1, 1, conv_h, conv_w).repeat(batch_size, 1, 1, 1)
@@ -94,19 +71,16 @@ class generator(nn.Module):
         projected = self.projection(sen_embed)
 
         # Relational module
-        phi = torch.cat([phi_im_coords, projected.view(batch_size, 1024, 1, 1).expand(-1, -1, 7, 11)], dim=1)
+        phi = torch.cat([phi_im_coords, projected.view(batch_size, 512, 1, 1).expand(-1, -1, 14, 22)], dim=1)
         phi_pre = self.preconv(phi)
-        '''
-        # Decoder
-        #phi_im_dec1 = self.decoder1(phi_pre, phi_im_enc4, custom_padding=True)
-        phi_im_dec1 = self.decoder1(phi_im, phi_im_enc4, custom_padding=True)
-        phi_im_dec2 = self.decoder2(phi_im_dec1, phi_im_enc3, custom_padding=True)
-        phi_im_dec3 = self.decoder3(phi_im_dec2, phi_im_enc2)
-        phi_im_dec4 = self.decoder4(phi_im_dec3, phi_im_enc1)
-        y = self.outconv(phi_im_dec4)
         
-        #return y, phi, phi_im, phi_s
-        return y, None, phi_im, None
+        # Decoder
+        phi_im_dec1 = self.decoder1(phi_pre, phi_im_enc3, custom_padding=True)
+        phi_im_dec2 = self.decoder2(phi_im_dec1, phi_im_enc2, custom_padding=True)
+        phi_im_dec3 = self.decoder3(phi_im_dec2, phi_im_enc1)
+        y = self.outconv(phi_im_dec3)
+        
+        return y, phi, phi_im, phi_s
     
 
 def init_weights(net, init_type='normal'):

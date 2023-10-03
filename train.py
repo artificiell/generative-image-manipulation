@@ -36,9 +36,13 @@ from sentence_transformers import SentenceTransformer
 from tqdm import tqdm, trange
 import gimli
 import gimli_v2
+import gimli_unet
+import gimli_attention_unet
+import gimli_residual_unet
 import gimli_with_attention
 from pickle import dump
 from utils import SaveBestModel, save_model, save_loss_plot
+from torchsummary import summary
 
 writer = SummaryWriter()
 
@@ -80,7 +84,7 @@ def split_dataset(args):
     print('\ttrain set: ', train_size)
     print('\ttest set: ', test_val_size)
     print('\tval set: ', test_val_size)
-    train_dataset, test_dataset, val_dataset = torch.utils.data.random_split(train_test, [train_size, test_val_size, test_val_size])
+    train_dataset, test_dataset, val_dataset = torch.utils.data.random_split(train_test, [train_size, test_val_size, test_val_size], torch.Generator().manual_seed(args.seed))
     train_dataloader = torch.utils.data.DataLoader(train_dataset, 
                                                    batch_size=args.batch_size,
                                                    shuffle=True,
@@ -116,19 +120,20 @@ def train(data, model, lang_model, optimizer, epoch, args, loss_dict):
     for batch_idx, sample_batched in enumerate(progress_bar):
         
         assert type(sample_batched) is list
+        action_list = [str(d['mod']['str']) for d in sample_batched]
+        action_embeddings = lang_model.encode(action_list)
         src_img = np.stack([d['source_img_data'] for d in sample_batched])
         src_img = torch.from_numpy(src_img).float()
         target_img = np.stack([d['target_img_data'] for d in sample_batched])
         target_img = torch.from_numpy(target_img).float()
         if torch.cuda.device_count() > 0 and args.cuda:
+            embedding_tensor = torch.from_numpy(action_embeddings).cuda()
             src_img = torch.autograd.Variable(src_img).cuda()
             target_img = torch.autograd.Variable(target_img).cuda()
         else:
+            embedding_tensor = torch.from_numpy(action_embeddings).cpu()
             src_img = torch.autograd.Variable(src_img).cpu()
             target_img = torch.autograd.Variable(target_img).cpu()
-        action_list = [str(d['mod']['str']) for d in sample_batched]
-        action_embeddings = lang_model.encode(action_list)
-        embedding_tensor = torch.from_numpy(action_embeddings)
        
         
         # Forward pass
@@ -191,7 +196,7 @@ def train(data, model, lang_model, optimizer, epoch, args, loss_dict):
     if epoch % 50 == 0:
             tensor = torch.cat((src_img.cpu().data, target_img.cpu().data, output.cpu().data), 0)
             save_image(tensor, './outputs/modelG_{}_{}.png'.format(args.model, epoch), nrow=args.batch_size, normalize=True, range=(-1, 1))
-            with open('actions_{}_{}.pkl'.format(args.model, epoch), 'wb') as file:
+            with open('./outputs/actions_{}_{}.pkl'.format(args.model, epoch), 'wb') as file:
                 dump(action_list, file)
     
     loss_value = sum(epoch_loss)/len(epoch_loss)
@@ -214,20 +219,20 @@ def validate(data, model, lang_model, epoch, args, loss_dict):
         for batch_idx, sample_batched in enumerate(progress_bar):
             
             assert type(sample_batched) is list
+            action_list = [str(d['mod']['str']) for d in sample_batched]
+            action_embeddings = lang_model.encode(action_list)
             src_img = np.stack([d['source_img_data'] for d in sample_batched])
             src_img = torch.from_numpy(src_img).float()
             target_img = np.stack([d['target_img_data'] for d in sample_batched])
             target_img = torch.from_numpy(target_img).float()
             if torch.cuda.device_count() > 0 and args.cuda:
+                embedding_tensor = torch.from_numpy(action_embeddings).cuda()
                 src_img = torch.autograd.Variable(src_img).cuda()
                 target_img = torch.autograd.Variable(target_img).cuda()
             else:
+                embedding_tensor = torch.from_numpy(action_embeddings).cpu()
                 src_img = torch.autograd.Variable(src_img).cpu()
-                target_img = torch.autograd.Variable(target_img).cpu()
-            action_list = [str(d['mod']['str']) for d in sample_batched]
-            action_embeddings = lang_model.encode(action_list)
-            embedding_tensor = torch.from_numpy(action_embeddings)
-        
+                target_img = torch.autograd.Variable(target_img).cpu()        
             
             # Forward pass
             output, _, _ ,_ = model(src_img, embedding_tensor)
@@ -291,19 +296,20 @@ def test(data, model, lang_model, epoch, args, loss_dict):
     for batch_idx, sample_batched in enumerate(progress_bar):
         
         assert type(sample_batched) is list
+        action_list = [str(d['mod']['str']) for d in sample_batched]
+        action_embeddings = lang_model.encode(action_list)
         src_img = np.stack([d['source_img_data'] for d in sample_batched])
         src_img = torch.from_numpy(src_img).float()
         target_img = np.stack([d['target_img_data'] for d in sample_batched])
         target_img = torch.from_numpy(target_img).float()
         if torch.cuda.device_count() > 0 and args.cuda:
+            embedding_tensor = torch.from_numpy(action_embeddings).cuda()
             src_img = torch.autograd.Variable(src_img).cuda()
             target_img = torch.autograd.Variable(target_img).cuda()
         else:
+            embedding_tensor = torch.from_numpy(action_embeddings).cpu()
             src_img = torch.autograd.Variable(src_img).cpu()
             target_img = torch.autograd.Variable(target_img).cpu()
-        action_list = [str(d['mod']['str']) for d in sample_batched]
-        action_embeddings = lang_model.encode(action_list)
-        embedding_tensor = torch.from_numpy(action_embeddings)
         
         output, _, _, _ = model(src_img, embedding_tensor)
         
@@ -346,6 +352,27 @@ def main(args):
 
     model_name = ''
     start_epoch = 1
+    if 'original' in args.model.lower():
+        model = gimli.generator()
+        model_name = 'gimli-og'
+    elif 'v2' in args.model.lower():
+        model = gimli_v2.generator()
+        model_name = 'gimli-1k'
+    elif 'attention' in args.model.lower():
+        model = gimli_with_attention.generator()
+        model_name = 'gimli-attn'
+    elif 'aunet' in args.model.lower():
+        model = gimli_attention_unet.generator()
+        model_name = 'gimli-attention-unet'
+    elif 'unet' in args.model.lower():
+        model = gimli_unet.generator()
+        model_name = 'gimli-unet'
+    elif 'resunet' in args.model.lower():
+        model = gimli_residual_unet.generator()
+        model_name = 'gimli-residual-unet'
+
+    # Load model...
+    checkpoint = None
     if args.resume:
         filename = args.resume
         if os.path.isfile(filename):
@@ -354,42 +381,38 @@ def main(args):
                 checkpoint = torch.load(filename)
             else:
                 checkpoint = torch.load(filename, map_location=torch.device('cpu'))
-                
-            model = checkpoint
+            model.load_state_dict(checkpoint['model_state_dict'], strict=False)
             print('\t==> loaded checkpoint {}\n'.format(filename))
         
-        start_epoch = int(re.match(r'.*epoch_(\d+).pth', args.resume).groups()[0]) + 1
+        start_epoch = checkpoint['epoch'] #int(re.match(r'.*epoch_(\d+).pth', args.resume).groups()[0]) + 1
         print('\nFinished loading checkpoints. Starting from epoch {}\n\n!'.format(start_epoch))
+
+    # ...or init weights
     else:
-        if 'original' in args.model.lower():
-            model = gimli.generator()
-            model_name = 'gimli-og'
-        elif 'v2' in args.model.lower():
-            model = gimli_v2.generator()
-            model_name = 'gimli-1k'
-        elif 'attention' in args.model.lower():
-            model = gimli_with_attention.generator()
-            model_name = 'gimli-attn'
+        if 'unet' not in args.model.lower():
+            model.apply(gimli_v2.weights_init)
     
     # print(model)
     # language_model = SentenceTransformer('all-MiniLM-L6-v2')
     language_model = SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')
-    
-    if torch.cuda.device_count() > 0 and args.cuda:
+
+    if torch.cuda.device_count() > 1 and args.cuda:
         model = torch.nn.DataParallel(model)
         model.module.cuda()
-    
-    if args.cuda:
+    elif args.cuda:
         model.cuda()
-    
-    if not args.resume:
-        model.apply(gimli_v2.weights_init)
+    else:
+        model.cpu()
+    #summary(model, [(3, 256, 256), (1, 384)])    
     
     progress_bar = trange(start_epoch, args.epochs + 1)
     t_progress_bar = trange(start_epoch, args.epochs + 1)
     v_progress_bar = trange(start_epoch, args.epochs + 1)
     
     optimizer = torch.optim.Adamax(model.parameters(), lr=args.lr, weight_decay=1e-5)
+    if checkpoint is not None:
+         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+         print('\t==> loaded  optimizer\n')
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.lr_step, gamma=args.lr_gamma)
     scheduler.last_epoch = start_epoch
     train_loss = {}
@@ -417,24 +440,27 @@ def main(args):
         t_progress_bar.set_description('TEST')
         test(test_dataloader, model, language_model, epoch, args, test_loss)
 
+        # Save the progress
         save_loss_plot(train_loss, val_loss, test_loss)        
         if epoch % 50 == 0:
-            torch.save(model.state_dict(), './{}_epoch_{}.pth'.format(model_name, epoch))
-    
+            #torch.save(model.state_dict(), './{}_epoch_{}.pth'.format(model_name, epoch))
+            save_model(epoch, model, optimizer, criterion, model_name)
+
+            # Store training loss
+            with open('./outputs/{}_train_loss_epoch_{}.pkl'.format(model_name, epoch), 'wb') as file:
+                dump(train_loss, file)
+            # Store validation loss
+            with open('./outputs/{}_val_loss_epoch_{}.pkl'.format(model_name, epoch), 'wb') as file:
+                dump(val_loss, file)
+            # Store testing loss
+            with open('./outputs/{}_test_loss_epoch_{}.pkl'.format(model_name, epoch), 'wb') as file:
+                dump(test_loss, file)
+
+    # Print final traning time
     total_time = time() - start_time
     print('\nTotal time taken:\n\t{}\n'.format(total_time))
     writer.add_scalar('Total time', total_time)
     writer.flush()
-    # Store training loss
-    with open('./{}_train_loss_{}_epochs.pkl'.format(model_name, args.epochs), 'wb') as file:
-        dump(train_loss, file)
-    # Store validation loss
-    with open('./{}_val_loss_{}_epochs.pkl'.format(model_name, args.epochs), 'wb') as file:
-        dump(val_loss, file)
-    # Store testing loss
-    with open('./{}_test_loss_{}_epochs.pkl'.format(model_name, args.epochs), 'wb') as file:
-        dump(test_loss, file)
-    # writer.close()
 
 if __name__ == '__main__':
     # Training settings
@@ -479,6 +505,8 @@ if __name__ == '__main__':
                         help='use log-likelihood loss function (default: mean squared error)')
     parser.add_argument('--from-epoch', type=int, default=0,
                         help='when using a pre-trained model')
+    parser.add_argument('--seed', type=int, default=42,
+                        help='fixed random generator seed (for reproducible)')
     # parser.add_argument('--bs-max', type=int, default=-1,
     #                     help='max batch-size')
     # parser.add_argument('--bs-gamma', type=float, default=1, 

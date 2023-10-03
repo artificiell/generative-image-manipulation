@@ -22,20 +22,20 @@ class SaveBestModel:
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'loss': criterion,
-                }, 'outputs/{}_best_model.pth'.format(model_name))
+                }, './outputs/{}_best_model.pth'.format(model_name))
             
 
-def save_model(epochs, model, optimizer, criterion):
+def save_model(epoch, model, optimizer, criterion, model_name):
     """
-    Function to save the trained model to disk.
+    Function to save the trained models to disk.
     """
-    print(f"Saving final model...")
+    print(f"\nSaving model at epoch: : {epoch}\n")
     torch.save({
-                'epoch': epochs,
+                'epoch': epoch,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'loss': criterion,
-                }, 'outputs/final_model.pth')
+                }, './outputs/{}_epoch_{}.pth'.format(model_name, epoch))
 
 
 def save_accuracy_plot(train_acc, valid_acc):
@@ -55,7 +55,7 @@ def save_accuracy_plot(train_acc, valid_acc):
     plt.xlabel('Epochs')
     plt.ylabel('Accuracy')
     plt.legend()
-    plt.savefig('outputs/accuracy.png')
+    plt.savefig('./outputs/accuracy.png')
 
 def save_loss_plot(train_loss, valid_loss, test_loss):
     """
@@ -78,4 +78,4 @@ def save_loss_plot(train_loss, valid_loss, test_loss):
     plt.xlabel('Epochs')
     plt.ylabel('Loss')
     plt.legend()
-    plt.savefig('outputs/loss.png')
+    plt.savefig('./outputs/loss.png')

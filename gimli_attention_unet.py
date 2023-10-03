@@ -4,7 +4,7 @@ import torch.nn as nn
 from torch.nn import init
 from torch.autograd import Variable
 
-from block import SingleConvBlock, DoubleConvBlock, UpSingleConvBlock, UpDoubleConvBlock
+from block import SingleConvBlock, DoubleConvBlock, UpAttentionBlock, UpSingleConvBlock, UpDoubleConvBlock
 
 # Generator model
 class generator(nn.Module):
@@ -14,16 +14,6 @@ class generator(nn.Module):
 
         # Joint pool layer
         self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
-        
-        # Image encoder pathway
-        self.encoder1 = SingleConvBlock(num_channels, 64)
-        self.encoder2 = SingleConvBlock(64, 128)
-        self.encoder3 = SingleConvBlock(128, 256)
-        self.encoder4 = SingleConvBlock(256, 512)
-
-        self.bottleneck = SingleConvBlock(512, 1024)
-        self.preconv = SingleConvBlock(2050, 1024)
-        '''
 
         # Image encoder pathway
         self.encoder1 = DoubleConvBlock(num_channels, 64)
@@ -32,9 +22,8 @@ class generator(nn.Module):
         self.encoder4 = DoubleConvBlock(256, 512)
 
         self.bottleneck = DoubleConvBlock(512, 1024)
-        self.preconv = DoubleConvBlock(2050, 1024) 
-        '''
-       
+        self.preconv = DoubleConvBlock(2050, 1024)
+        
         # Linear projection
         self.projection = nn.Sequential(
             nn.Linear(384, mlp_hidden),
@@ -48,19 +37,12 @@ class generator(nn.Module):
             torch.linspace(-1, 1, width_hidden),
             torch.linspace(-1, 1, height_hidden)
         )
-
+        
         # Image decoder pathway
-        self.decoder1 = UpSingleConvBlock(1024, 512)
-        self.decoder2 = UpSingleConvBlock(512, 256)
-        self.decoder3 = UpSingleConvBlock(256, 128)
-        self.decoder4 = UpSingleConvBlock(128, 64)
-        '''
-        # Image decoder pathway
-        self.decoder1 = UpDoubleConvBlock(1024, 512)
-        self.decoder2 = UpDoubleConvBlock(512, 256)
-        self.decoder3 = UpDoubleConvBlock(256, 128)
-        self.decoder4 = UpDoubleConvBlock(128, 64)
-        '''
+        self.decoder1 = UpAttentionBlock(1024, 512)
+        self.decoder2 = UpAttentionBlock(512, 256)
+        self.decoder3 = UpAttentionBlock(256, 128)
+        self.decoder4 = UpAttentionBlock(128, 64)
         
         # Output layer
         self.outconv = nn.Conv2d(64, num_channels, kernel_size=1)
@@ -81,7 +63,7 @@ class generator(nn.Module):
         phi_im_enc3 = self.encoder3(self.pool(phi_im_enc2))
         phi_im_enc4 = self.encoder4(self.pool(phi_im_enc3))
         phi_im = self.bottleneck(self.pool(phi_im_enc4))
-        '''
+
         # Cast all pairs against each other
         batch_size, n_channel, conv_h, conv_w = phi_im.size()
         x_grid = self.x_grid.reshape(1, 1, conv_h, conv_w).repeat(batch_size, 1, 1, 1)
@@ -96,17 +78,15 @@ class generator(nn.Module):
         # Relational module
         phi = torch.cat([phi_im_coords, projected.view(batch_size, 1024, 1, 1).expand(-1, -1, 7, 11)], dim=1)
         phi_pre = self.preconv(phi)
-        '''
+        
         # Decoder
-        #phi_im_dec1 = self.decoder1(phi_pre, phi_im_enc4, custom_padding=True)
-        phi_im_dec1 = self.decoder1(phi_im, phi_im_enc4, custom_padding=True)
+        phi_im_dec1 = self.decoder1(phi_pre, phi_im_enc4, custom_padding=True)
         phi_im_dec2 = self.decoder2(phi_im_dec1, phi_im_enc3, custom_padding=True)
         phi_im_dec3 = self.decoder3(phi_im_dec2, phi_im_enc2)
         phi_im_dec4 = self.decoder4(phi_im_dec3, phi_im_enc1)
         y = self.outconv(phi_im_dec4)
         
-        #return y, phi, phi_im, phi_s
-        return y, None, phi_im, None
+        return y, phi, phi_im, phi_s
     
 
 def init_weights(net, init_type='normal'):
